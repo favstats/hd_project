@@ -1,0 +1,371 @@
+---
+title: "Tidy Template"
+author: "Fabio Votta"
+date: "The Date"
+output: html_output
+---
+
+This script is about:
+
+
+
+## Packages and Folders
+
+```{r}
+# Install these packages if you don't have them yet
+# devtools::install_github("favstats/tidytemplate")
+# install.packages("pacman")
+
+pacman::p_load(tidyverse, rvest, qdapRegex)
+
+# Creates folders
+# tidytemplate::data_dir()
+# tidytemplate::images_dir()
+```
+
+#### Posts
+
+```{r}
+# html <- tidytemplate::load_it("data/html.Rdata")
+
+
+get_posts <- function(html) {
+
+post_ids <- html %>% 
+  html_nodes(".postbody") %>% 
+  html_nodes("h3 a") %>% 
+  html_attr("href")
+
+post_titles <- html %>% 
+  html_nodes(".postbody") %>% 
+  html_nodes("h3 a") %>% 
+  html_text()
+
+post_date <- html %>% 
+  html_nodes(".postbody") %>% 
+  html_nodes(".author") %>% 
+  html_text()
+
+posts <- html %>% 
+  html_nodes(".postbody") %>% 
+  html_nodes(".content")
+
+post_link_extract <- function(posts) {
+posts %>% 
+  # .[[1]] %>% 
+  html_nodes(".postlink") %>% 
+  html_attr("href") 
+}
+
+post_links <- posts %>% 
+  map(post_link_extract)
+
+post_iframe_extract <- function(posts) {
+posts %>% 
+  # .[[1]] %>% 
+  html_nodes("iframe") %>% 
+  html_attr("src")
+}
+
+post_iframes <- posts %>% 
+  map(post_iframe_extract)
+  
+post_extract_author <- function(posts) {
+posts %>% 
+  # .[[1]] %>% 
+  html_nodes("cite") %>% 
+  html_text()
+}
+
+post_cite_author <- posts %>% 
+  map(post_extract_author)
+
+post_extract_cite <- function(posts) {
+posts %>% 
+  html_nodes("blockquote") %>% 
+  html_text()
+}
+
+post_cite_text <- posts %>% 
+  map(post_extract_cite)
+  
+post_text <- html %>% 
+  html_nodes(".postbody") %>% 
+  html_nodes(".content") %>% 
+  # .[[1]] %>% 
+  html_text()
+
+
+post_dat <- tibble(post_ids,
+       post_titles,
+       post_date,
+       post_links,
+       post_iframes,
+       post_cite_author,
+       post_text)
+
+return(post_dat)  
+}
+
+# post_dat <- get_posts(html)
+# 
+# post_dat
+```
+
+
+### Front Page
+
+```{r}
+url_front <- "https://forum.codoh.com/viewforum.php?f=2"
+
+html_front <- url_front %>% 
+  read_html() 
+```
+
+#### main table
+
+```{r}
+get_topics <- function(html_front) {
+topic_links <- html_front %>% 
+  html_nodes(".topictitle") %>% 
+  html_attr("href")
+
+topic_title <- html_front %>% 
+  html_nodes(".topictitle") %>% 
+  html_text()
+
+get_topic_authors <- function(html_front) {
+if(html_front %>% 
+  html_nodes(".responsive-hide") %>% #.[[9]]
+  # html_nodes(".username") %>% 
+  html_text() %>% 
+  str_detect(., "Moderator|Webmaster") %>% any){
+  
+topic_author <- html_front %>% 
+  html_nodes(".responsive-hide") %>% #.[[9]]
+  # html_nodes(".username") %>% 
+  html_text() 
+
+return(topic_author)
+  } else {
+topic_author <- html_front %>% 
+  html_nodes(".responsive-hide") %>% #.[[9]]
+  html_nodes(".username") %>%
+  html_text()
+
+return(topic_author)
+  }
+}
+
+topic_author <- get_topic_authors(html_front)
+
+topic_n_posts <- html_front %>% 
+  html_nodes(".posts") %>% 
+  html_text() %>% 
+  .[-1]
+
+topic_views <- html_front %>% 
+  html_nodes(".views") %>% 
+  html_text() %>% 
+  .[-1]
+
+topic_dat <- tibble(topic_title,
+                    topic_author,
+                    topic_n_posts,
+                    topic_views,
+                    topic_links) %>% 
+  mutate(topic_ids = qdapRegex::rm_between(topic_links, "t=", "&sid",
+                                           extract = T)) %>%
+  unnest() %>%
+  mutate(topic_links = str_remove(topic_links, "./")) %>% 
+  mutate(topic_links = str_remove(topic_links, 
+                                  "&sid=4191b66a58de46fb2878a5cdf2a81134")) %>% 
+  mutate(topic_links = paste0("https://forum.codoh.com/", topic_links)) %>% 
+  mutate(topic_n_posts = str_extract(topic_n_posts, "\\d+")) %>% 
+  mutate(topic_views = str_extract(topic_views, "\\d+")) %>% 
+  mutate(topic_n_posts = as.numeric(topic_n_posts)) %>% 
+  mutate(topic_views = as.numeric(topic_views)) 
+  
+return(topic_dat)
+}
+
+
+```
+
+### Subforum
+
+```{r}
+end_num <- html_front %>% 
+  html_nodes(".ellipsis+ li a") %>% 
+  html_text() %>% 
+  .[1] %>% 
+  as.numeric()
+
+url_debate <- "https://forum.codoh.com/viewforum.php?f=2"
+
+link_number <- seq(0, (end_num * 25) - 25, by = 25)
+
+debate_pages <- paste0(url_debate, "&start=", link_number)
+  
+scrape_topics <- function(url) {
+cat(paste0("\nLink: ", url, "\n"))
+read_html(url) %>% 
+    get_topics()
+}
+
+topics_data <- debate_pages %>% 
+  map_df(~scrape_topics(.x) %>% 
+           mutate(link = .x)) 
+
+tidytemplate::save_it(topics_data)
+
+linktails_dat <- tibble(
+  pages = seq(0, 10000),
+  link_number = lapply(0:10000, function(x) 15*(0:x)))# %>% 
+ # unnest(link_number)
+  
+
+topics_data_paginated <- topics_data %>% 
+  mutate(pages = (topic_n_posts/15) %>% floor) %>% 
+  mutate(pages = ifelse(pages == 0, 1, pages)) %>%
+  left_join(linktails_dat) %>% 
+  unnest(link_number) %>% 
+  mutate(linktails = paste0("&start=", link_number)) %>% 
+  mutate(topic_link_pages = paste0(topic_links, linktails))
+
+```
+
+
+### Scrape Posts
+
+```{r}
+scrape_posts <- function(url) {
+# Sys.sleep(1)
+# cat(paste0("\nLink: ", url, "\n"))
+data <- read_html(url) %>% 
+    get_posts()
+return(data)
+}
+
+
+# posts_data <- topics_data_paginated$topic_link_pages %>% 
+#   map_df(~scrape_posts(.x) %>% 
+#            mutate(link = .x)) 
+
+debate_posts_data <- list()
+for (jj in 1:length(topics_data_paginated$topic_link_pages)) {
+  debate_posts_data[[jj]] <- scrape_posts(topics_data_paginated$topic_link_pages[jj])
+  cat(paste0("\nTopic Title: ", topics_data_paginated$topic_title[jj], "\tPage: ", 
+             as.factor(topics_data_paginated$link[jj]) %>% as.numeric, "\n"))
+  # as factor for individual posts doesn'T make much sense
+  cat(paste0("N: ", jj, "\t", 
+             round(jj / length(topics_data_paginated$topic_link_pages) * 100, 2), "%\n"),
+             "Link: ", topics_data_paginated$topic_link_pages[jj], "\n")
+  
+Sys.sleep(1)
+
+  if ((jj/10) %in% 1:100000) {
+    cat("\nReached ", jj, " Posts. Binding rows...")
+    debate_posts_dat <- debate_posts_data %>% 
+      bind_rows() %>% 
+      mutate(topic_link_pages = topics_data_paginated$topic_link_pages[jj])
+    cat("done! \nSaving...\n")
+    save(debate_posts_dat, file = paste0("data/debate_posts_dat_", jj, ".Rdata"))
+    cat(paste0("Saved at ", (jj/10), ": ", Sys.time(), "\n"))
+    file.remove(paste0("data/debate_posts_dat_", jj - 10, ".Rdata"))
+
+  }
+  
+}
+
+# debate_posts <- tidytemplate::load_it("data/debate_posts_dat_16590.Rdata")
+# 
+# 
+# tidytemplate::save_it(debate_posts_data)
+# 
+# 
+# scrape_posts("https://forum.codoh.com/viewtopic.php?f=2&t=5890&sid=1e181c9b9a686b212f61c0a06d7dcb94&start=30")
+
+```
+#### retrieving the lost ones
+
+```{r}
+
+
+losts <-  tail(topics_data_paginated, 7)
+
+losts_data <- list()
+for (jj in 1:length(losts$topic_link_pages)) {
+  losts_data[[jj]] <- scrape_posts(losts$topic_link_pages[jj])
+  cat(paste0("\nTopic Title: ", losts$topic_title[jj], "\tPage: ", 
+             as.factor(losts$link[jj]) %>% as.numeric, "\n"))
+  # as factor for individual posts doesn'T make much sense
+  cat(paste0("N: ", jj, "\t", 
+             round(jj / length(losts$topic_link_pages) * 100, 2), "%\n"),
+             "Link: ", losts$topic_link_pages[jj], "\n")
+  if (jj == 7){
+    losts_data <- losts_data %>% 
+      bind_rows() %>% 
+      mutate(topic_link_pages = losts$topic_link_pages[jj])
+  }
+}
+
+
+# debate_posts <- tidytemplate::load_it("data/debate_posts_dat_16590.Rdata")
+
+debate_posts <- bind_rows(debate_posts, 
+                          losts_data %>% .[-1:-5,]) %>% as_tibble()
+
+tidytemplate::save_it(debate_posts)
+```
+
+
+### clean
+
+```{r}
+# debate_posts <- tidytemplate::load_it("data/debate_posts.Rdata")
+
+
+debate_posts <- debate_posts %>% 
+  mutate(cdate = rm_between(post_date, "o (", ")",
+                            extract = T) %>% as.character) %>% 
+  mutate(cdate = stringi::stri_sub(cdate, 4)) %>% 
+  mutate(cdate_detailed = lubridate::mdy_hm(cdate)) %>% 
+  mutate(year = lubridate::year(cdate_detailed)) %>% 
+  mutate(day = lubridate::day(cdate_detailed)) %>% 
+  mutate(month = lubridate::month(cdate_detailed)) %>% 
+  # why do 36 fail to parse?
+  mutate(cdate = lubridate::ymd(paste0(year, "-", month, "-", day))) %>% 
+  # why do 36 fail to parse?
+  mutate(cdate_month = lubridate::ymd(paste0(year, "-", month, "-01")))
+  
+
+
+monthly_posts <- debate_posts %>% 
+  group_by(cdate_month) %>% 
+  tally() %>% #.$n %>% sum
+  ggplot(aes(cdate_month, n)) +
+  geom_point() +
+  geom_line() +
+  geom_smooth(se = F, color = "red") +
+  scale_x_date(date_labels = "%d %b %Y", date_breaks = "2 years") +
+  ggthemes::theme_hc() +
+  labs(x = "", y = "Number of Posts", title = "Number of Posts by Month on COHOD Subforum (2002 - 2018)", subtitle = "Subforum: 'Holocaust' Debate / Controversies / Comments / News", caption = "Total Number of Posts: 104.335")
+
+tidytemplate::ggsave_it(monthly_posts, width = 10, height = 6)
+
+
+daily_posts <- debate_posts %>% 
+  group_by(cdate) %>% 
+  tally() %>% #.$n %>% sum
+  ggplot(aes(cdate, n)) +
+  geom_line(size = 0.1) +
+  geom_smooth(se = F, color = "red") +
+  scale_x_date(date_labels = "%d %b %Y", date_breaks = "2 years") +
+  ggthemes::theme_hc() +
+  labs(x = "", y = "Number of Posts", title = "Number of Posts by Day on COHOD Subforum (2002 - 2018)", subtitle = "Subforum: 'Holocaust' Debate / Controversies / Comments / News", caption = "Total Number of Posts: 104.335")
+
+tidytemplate::ggsave_it(daily_posts, width = 10, height = 6)
+
+```
+
