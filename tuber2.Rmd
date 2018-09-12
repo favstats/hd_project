@@ -1,0 +1,1403 @@
+---
+title: "Tidy Template"
+author: "Fabio Votta"
+date: "The Date"
+output: html_output
+---
+
+This script is about:
+
+
+
+## Packages and Folders
+
+```{r}
+# Install these packages if you don't have theme yet
+# devtools::install_github("soodoku/tuber", build_vignettes = TRUE)
+# install.packages("pacman")
+
+pacman::p_load(tidyverse, tuber, rvest, beepr, tidyMBO, magrittr)
+
+source("helpers.R")
+
+authentication()
+
+# yt_oauth("580511698053-p8mu77kktkcvb503g9q737svu9gcq101.apps.googleusercontent.com", "Y0eW96yy-WRg90RZjVJS615o")
+```
+
+
+## Holohoax
+
+### Stats
+
+```{r}
+holohoax <- get_links("data/holohoax - YouTube.html")
+
+## clean playlist
+
+# hoax_keywords <- "hoax|fake|debunk|deprogram|holo|lie|revision|denier|denial|deny|fraud|duke|jew|irving|collins|genocide|gas|treblinka|auschwitz|lampshade|cole|zion|z.ndel|faurisson|soap|gorillion|finkel|juda|anne frank|mahler|t.ben|jude|false|truth|fabricate|eric hunt|hidden|haverbeck|conspiracy|rassinier|ihr|germar|carto|mattogno|kues|belzec|sobibor|death camp|chelmno|graf|verbeke|hollow"
+
+hoax_keywords <- "(holohoax|duke|irving|collins|cole|z.ndel|faurisson|gorillion|finkelstein|mahler|t.ben|eric hunt|haverbeck|conspiracy|rassinier|ihr|germar|carto|mattogno|kues|graf|verbeke)|(holocaust|belzec|sobibor|death camp|chelmno|gas).*?(hoax|fake|debunk|deprogram|holo|lie|revision|denier|denial|deny|fraud)"
+
+
+stringr::str_detect("holocaust hidden", hoax_keywords)
+
+holohoax_playlist <- holohoax %>% 
+  mutate(holohoax_filter = ifelse(
+      str_detect(stringr::str_to_lower(title), hoax_keywords), 1, 0)) %>% 
+  filter(holohoax_filter == 1) %>% 
+  filter(!(str_detect(title, "PROBABLE FALSE FLAGS, FRAUDS, PSYOPS|Pro holocaust|9/11"))) %>%
+  mutate(links = str_remove(links, "https://www.youtube.com/playlist\\?list="))
+
+
+
+holohoax_children <- get_items(holohoax_playlist$links) 
+
+tidytemplate::save_it(holohoax_children)
+
+holohoax_children <- tidytemplate::load_it("data/holohoax_children.Rdata")
+
+
+holohoax_plot <- holohoax_children %>% 
+  dplyr::distinct(video_id, .keep_all = T)
+
+holohoax_plot
+
+
+
+holohoax_details <- get_more_details(holohoax_plot$video_id)
+
+
+tidytemplate::save_it(holohoax_details)
+
+holohoax_details <- tidytemplate::load_it("data/holohoax_details.Rdata")
+
+
+# get_stats(video_id = "m2DYtbNMeSg") %>% 
+#   bind_rows()
+# 
+# 
+# get_vids_details(video_id = "NRxCuujxJSY")
+
+
+holohoax_data <- holohoax_plot %>% 
+  left_join(holohoax_details)  %>% 
+  mutate(title_filter = ifelse(str_detect(stringr::str_to_lower(title), hoax_keywords ), 1, 0)) %>% 
+  mutate(description_filter = ifelse(str_detect(stringr::str_to_lower(description), hoax_keywords ), 1, 0)) %>% 
+  filter(title_filter == 1 | description_filter == 1) 
+
+
+holohoax_dat <- holohoax_data %>% 
+  drop_na(title) %>% 
+  mutate(upload_date = contentDetails.videoPublishedAt) %>% 
+  arrange(upload_date) %>% 
+  select(title, upload_date, video_id, viewCount:commentCount, description, channel_title, channel_id)
+
+xlsx::write.xlsx(holohoax_dat, file = "data/holohoax_dat.xlsx")
+
+table(is.na(holohoax_plot$contentDetails.videoId))
+```
+
+### Dataviz
+
+#### over time
+
+```{r}
+options(scipen = 999)
+
+holohoax_monthly <- holohoax_data %>% 
+  mutate(cdate = lubridate::ydm(paste0(year, "-", "01", "-", month))) %>%# drop_na(cdate)
+  arrange(desc(cdate)) %>% 
+  group_by(cdate) %>%
+  summarize(n = n(),
+            Views = sum(viewCount %>% as.numeric, na.rm = T)) %>% 
+  arrange(desc(n)) %>% 
+  na.omit() %>% 
+  ggplot(aes(cdate, n)) +
+  geom_point(alpha = 0.5) +
+  # viridis::scale_color_viridis("Total Views", direction = -1,
+  #                              labels = scales::unit_format(unit = "m",
+  #                                                           scale = 0.000001),
+  #                              breaks = seq(1000000, 30000000, 9000000)) +
+  # scale_size_continuous("", labels = scales::unit_format(unit = "m",
+  #                                                        scale = 0.000001),
+  #                              breaks = seq(1000000, 30000000, 9000000)) +
+  geom_line(alpha = 0.5) +
+  geom_smooth(se = F, color = "red") +
+  scale_x_date(date_labels = "%Y", date_breaks = "1 year") +
+  theme_minimal() +
+  labs(x = "", y = "Number of Videos", title = "Number of Video Uploads in 'Holohoax' Playlists on YouTube by Month (2006 - 2018)", caption = "Total Number of Videos: 3,591.\nNote: 1,445 Videos within the playlists are not available or deleted.") #+
+  # guides(colour = guide_colourbar(barwidth = 15)) +
+  # theme(legend.position = "bottom")
+
+tidytemplate::ggsave_it(holohoax_monthly, width = 10, height = 6)
+
+holohoax_yearly <- holohoax_data %>% 
+  mutate(cdate = lubridate::ydm(paste0(year, "-01-01"))) %>% 
+  arrange(desc(cdate)) %>% 
+  group_by(cdate) %>%
+  summarize(n = n(),
+            Views = sum(viewCount %>% as.numeric, na.rm = T)) %>% 
+  arrange(desc(n)) %>% 
+  na.omit() %>% 
+  ggplot(aes(cdate, n)) +
+  geom_point(alpha = 0.5) +
+  # viridis::scale_color_viridis("Total Views", direction = -1,
+  #                              labels = scales::unit_format(unit = "m",
+  #                                                           scale = 0.000001),
+  #                              breaks = seq(5000000, 200000000, 50000000)) +
+  # scale_size_continuous("", labels = scales::unit_format(unit = "m",
+  #                                                        scale = 0.000001),
+  #                              breaks = seq(5000000, 200000000, 50000000)) +
+  geom_line(alpha = 0.5) +
+  ggrepel::geom_text_repel(aes(label = n), direction = "y") +
+  scale_x_date(date_labels = "%Y", date_breaks = "1 year") +
+  theme_minimal() +
+  labs(x = "", y = "Number of Videos", title = "Number of Video Uploads in 'Holohoax' Playlists on YouTube by Year (2006 - 2018)", caption = "Total Number of Videos: 3,591.\nNote: 1,445 Videos within the playlists are not available or deleted.") #+
+  # guides(colour = guide_colourbar(barwidth = 6)) +
+  # theme(legend.position = "bottom")
+
+tidytemplate::ggsave_it(holohoax_yearly, width = 10, height = 6)
+
+```
+
+
+#### views, comments and thumbs up
+
+```{r}
+holohoax_monthly_views <- holohoax_data %>% 
+  mutate(cdate = lubridate::ydm(paste0(year, "-", "01", "-", month))) %>% #drop_na(cdate)
+  arrange(desc(cdate)) %>% 
+  group_by(cdate) %>%
+  summarize(n = n(),
+            Views = sum(viewCount %>% as.numeric, na.rm = T)) %>% 
+  arrange(desc(n)) %>% 
+  na.omit() %>% 
+  ggplot(aes(cdate, Views)) +
+  geom_point(alpha = 0.5) +
+  scale_y_continuous(labels = scales::unit_format(unit = "m", scale = 0.000001)) +
+  geom_line(alpha = 0.5) +
+  geom_smooth(se = F, color = "red") +
+  scale_x_date(date_labels = "%Y", date_breaks = "1 year") +
+  theme_minimal() +
+  labs(x = "", y = "Number of Views", title = "Views of Videos in 'Holohoax' Playlists on YouTube by Upload Month (2006 - 2018)", caption = "Total Number of Videos: 3,591.\nNote: 1,445 Videos within the playlists are not available or deleted.") +
+  guides(colour = guide_colourbar(barwidth = 15)) +
+  theme(legend.position = "bottom")
+
+tidytemplate::ggsave_it(holohoax_monthly_views, width = 10, height = 6)
+
+holohoax_yearly_views <- holohoax_data %>% 
+  mutate(cdate = lubridate::ydm(paste0(year, "-01-01"))) %>% 
+  arrange(desc(cdate)) %>% 
+  group_by(cdate) %>%
+  summarize(n = n(),
+            Views = sum(viewCount %>% as.numeric, na.rm = T)) %>% 
+  arrange(desc(n)) %>% 
+  na.omit() %>% 
+  mutate(n = ifelse(n == max(n), paste0("Video Count: ", max(n)), n)) %>% 
+  ggplot(aes(cdate, Views)) +
+  geom_point(alpha = 0.5) +
+  scale_y_continuous(labels = scales::unit_format(unit = "m", scale = 0.000001)) +
+  geom_line(alpha = 0.5) +
+  ggrepel::geom_text_repel(aes(label = n), direction = "y") +
+  scale_x_date(date_labels = "%Y", date_breaks = "1 year") +
+  theme_minimal() +
+  labs(x = "", y = "Number of Views", title = "Views of Videos in 'Holohoax' Playlists on  YouTube by Upload Year (2006 - 2018)", caption = "Total Number of Videos: 3,591.\nNote: 1,445 Videos within the playlists are not available or deleted.") 
+
+tidytemplate::ggsave_it(holohoax_yearly_views, width = 10, height = 6)
+```
+
+
+## Revisionism
+
+### Stats
+
+```{r}
+revisionism <- get_links("data/holocaust revisionism - YouTube.html")
+
+## clean playlist
+
+hoax_keywords <- "(holohoax|duke|irving|collins|cole|z.ndel|faurisson|gorillion|finkelstein|mahler|t.ben|eric hunt|haverbeck|conspiracy|rassinier|ihr|germar|carto|mattogno|kues|graf|verbeke)|(holocaust|belzec|sobibor|death camp|chelmno|gas).*?(hoax|fake|debunk|deprogram|holo|lie|revision|denier|denial|deny|fraud)"
+
+
+revisionism_playlist <- revisionism %>% 
+  # mutate(revisionism_filter = ifelse(
+  #     str_detect(stringr::str_to_lower(title), hoax_keywords), 1, 0)) %>% 
+  # filter(revisionism_filter == 1) %>% 
+  # filter(!(str_detect(title, "PROBABLE FALSE FLAGS, FRAUDS, PSYOPS|Pro holocaust|9/11"))) %>% 
+  mutate(links = str_remove(links, "https://www.youtube.com/playlist\\?list="))
+
+
+
+revisionism_children <- get_items(revisionism_playlist$links) 
+
+tidytemplate::save_it(revisionism_children)
+
+
+revisionism_children <- tidytemplate::load_it("data/revisionism_children.Rdata")
+
+revisionism_plot <- revisionism_children %>% 
+  dplyr::distinct(video_id, .keep_all = T)
+
+revisionism_plot 
+
+# holohoax_plot %>% 
+#   bind_rows(revisionism_plot %>% 
+#               mutate(contentDetails.videoPublishedAt = as.character(contentDetails.videoPublishedAt))) %>% 
+#   distinct(video_id, .keep_all = T) %>% drop_na(contentDetails.videoPublishedAt)
+# 
+
+
+# revisionism_details <- get_more_details(revisionism_plot$video_id[1:12592])
+
+
+stats <- list()
+details <- list()
+revisionism_details2 <- list()
+for (jj in seq_along(revisionism_plot$video_id[12593 :25184])) {
+  # revisionism_details[[jj]] <- get_more_details(revisionism_plot$video_id[12593 :25184][1:3])[jj]
+  cat(paste0(round(jj/length(revisionism_plot$video_id[12593 :25184]) * 100, 2), "%\n"))
+    outcome <- tryCatch({  
+      # cat("\nGet Video Statistics\n")
+      stats[[jj]] <- get_video_stats(revisionism_plot$video_id[12593 :25184][jj])
+    }, 
+    error = function(e){
+      e
+    })
+    if (is.data.frame(outcome) | is.null(outcome)) { #checking if an error occured
+      stats[[jj]] <- get_video_stats(revisionism_plot$video_id[12593 :25184][jj])
+    } else if (str_detect(outcome$message, "401")) { #if Error Message include 401
+      cat("\n Loop stopped on iteration ", jj)
+      cat("\n", outcome$message)
+      message("\n YouTube Authentication needed!")
+      authentication()
+      cat("\n Waiting for 10 seconds...")
+      Sys.sleep(10)                
+      cat("\t Done! \n Continuing...")
+      stats[[jj]] <- get_video_stats(revisionism_plot$video_id[12593 :25184][jj])
+    }
+    
+    outcome <- tryCatch({  
+      # cat("\nGet Video Details\n")
+      details[[jj]] <- get_vids_details(revisionism_plot$video_id[12593 :25184][jj])
+    }, 
+    error = function(e){
+      e
+    })
+    if (is.data.frame(outcome) | is.null(outcome)) { #checking if an error occured
+      details[[jj]] <- get_vids_details(revisionism_plot$video_id[12593 :25184][jj])
+    } else if (str_detect(outcome$message, "401")) { #if Error Message include 401
+      cat("\n Loop stopped on iteration ", jj)
+      cat("\n", outcome$message)
+      message("\n YouTube Authentication needed!")
+      authentication()
+      cat("\n Waiting for 10 seconds...")
+      Sys.sleep(10)                
+      cat("\t Done! \n Continuing...")
+      details[[jj]] <- get_vids_details(revisionism_plot$video_id[12593 :25184][jj])
+    }
+    
+  # cat("\nMerging...\n")
+  
+  revisionism_details2[[jj]] <- bind_rows(stats) %>% 
+    left_join(bind_rows(details)) %>% 
+    mutate(date = lubridate::as_date(date)) %>% 
+    # dplyr::mutate(year = lubridate::year(date)) %>% 
+    # dplyr::mutate(day = lubridate::day(date)) %>% 
+    # dplyr::mutate(month = lubridate::month(date, label = T))  %>% 
+    rename(video_id = id)
+  
+}
+
+revisionism_details2 <- revisionism_details2 %>% bind_rows
+
+tidytemplate::save_it(revisionism_details2)
+
+revisionism_details <- tidytemplate::load_it("data/revisionism_details.Rdata")
+
+
+revisionism_data <- revisionism_plot %>% 
+  left_join(revisionism_details %>% select(-year, -day, -month))  %>% 
+  mutate(title_filter = ifelse(str_detect(stringr::str_to_lower(title), hoax_keywords ), 1, 0)) %>% 
+  mutate(description_filter = ifelse(str_detect(stringr::str_to_lower(description), hoax_keywords ), 1, 0)) %>% 
+  filter(title_filter == 1 | description_filter == 1) 
+
+
+
+revisionism_dat <- revisionism_data %>% 
+  drop_na(title) %>% 
+  mutate(upload_date = contentDetails.videoPublishedAt) %>% 
+  arrange(upload_date) %>% 
+  select(title, upload_date, video_id, viewCount:commentCount, description, channel_title, channel_id)
+
+xlsx::write.xlsx(revisionism_dat, file = "data/revisionism_dat.xlsx")
+
+table(is.na(revisionism_plot$contentDetails.videoId))
+
+
+
+revisionism_data <- holohoax_data %>% 
+  bind_rows(revisionism_data %>% 
+              mutate(contentDetails.videoPublishedAt = as.character(contentDetails.videoPublishedAt))) %>% 
+  distinct(video_id, .keep_all = T)
+
+
+tidytemplate::save_it(revisionism_data)
+
+diff(c(0, 0, 0, 0, 1, 1 ,1 ,1, 0))
+```
+
+### Dataviz
+
+#### over time
+
+```{r}
+options(scipen = 999)
+
+revisionism_monthly <- revisionism_data %>% 
+  mutate(cdate = lubridate::ydm(paste0(year, "-", "01", "-", month))) %>% #drop_na(cdate)
+  arrange(desc(cdate)) %>% 
+  group_by(cdate) %>%
+  summarize(n = n(),
+            Views = sum(viewCount %>% as.numeric, na.rm = T)) %>% 
+  arrange(desc(n)) %>% 
+  na.omit() %>% 
+  ggplot(aes(cdate, n)) +
+  geom_point(alpha = 0.5) +
+  # viridis::scale_color_viridis("Total Views", direction = -1,
+  #                              labels = scales::unit_format(unit = "m",
+  #                                                           scale = 0.000001),
+  #                              breaks = seq(1000000, 30000000, 9000000)) +
+  # scale_size_continuous("", labels = scales::unit_format(unit = "m",
+  #                                                        scale = 0.000001),
+  #                              breaks = seq(1000000, 30000000, 9000000)) +
+  geom_line(alpha = 0.5) +
+  geom_smooth(se = F, color = "red") +
+  scale_x_date(date_labels = "%Y", date_breaks = "1 year") +
+  theme_minimal() +
+  labs(x = "", y = "Number of Videos", title = "Number of Video Uploads in 'Holohoax' and 'Holocaust Revisionism' Playlists on YouTube by Month (2006 - 2018)", caption = "Total Number of Videos: 9,923.\nNote: 5,101 Videos within the playlists are not available or deleted.") #+
+  # guides(colour = guide_colourbar(barwidth = 15)) +
+  # theme(legend.position = "bottom")
+
+tidytemplate::ggsave_it(revisionism_monthly, width = 10, height = 6)
+
+revisionism_yearly <- revisionism_data %>% 
+  mutate(cdate = lubridate::ydm(paste0(year, "-01-01"))) %>% 
+  arrange(desc(cdate)) %>% 
+  group_by(cdate) %>%
+  summarize(n = n(),
+            Views = sum(viewCount %>% as.numeric, na.rm = T)) %>% 
+  arrange(desc(n)) %>% 
+  na.omit() %>% 
+  ggplot(aes(cdate, n)) +
+  geom_point(alpha = 0.5) +
+  # viridis::scale_color_viridis("Total Views", direction = -1,
+  #                              labels = scales::unit_format(unit = "m",
+  #                                                           scale = 0.000001),
+  #                              breaks = seq(5000000, 200000000, 50000000)) +
+  # scale_size_continuous("", labels = scales::unit_format(unit = "m",
+  #                                                        scale = 0.000001),
+  #                              breaks = seq(5000000, 200000000, 50000000)) +
+  geom_line(alpha = 0.5) +
+  ggrepel::geom_text_repel(aes(label = n), direction = "y") +
+  scale_x_date(date_labels = "%Y", date_breaks = "1 year") +
+  theme_minimal() +
+  labs(x = "", y = "Number of Videos", title = "Number of Video Uploads in 'Holohoax' and 'Holocaust Revisionism' Playlists on YouTube by Year (2006 - 2018)", caption = "Total Number of Videos: 9,923.\nNote: 5,101 Videos within the playlists are not available or deleted.") #+
+  # guides(colour = guide_colourbar(barwidth = 6)) +
+  # theme(legend.position = "bottom")
+
+tidytemplate::ggsave_it(revisionism_yearly, width = 10, height = 6)
+
+```
+
+
+
+#### views, comments and thumbs up
+
+```{r}
+revisionism_monthly_views <- revisionism_data %>% 
+  mutate(cdate = lubridate::ydm(paste0(year, "-", "01", "-", month))) %>% #drop_na(cdate)
+  arrange(desc(cdate)) %>% 
+  group_by(cdate) %>%
+  summarize(n = n(),
+            Views = sum(viewCount %>% as.numeric, na.rm = T)) %>% 
+  arrange(desc(n)) %>% 
+  na.omit() %>% 
+  ggplot(aes(cdate, Views)) +
+  geom_point(alpha = 0.5) +
+  scale_y_continuous(labels = scales::unit_format(unit = "m", scale = 0.000001)) +
+  geom_line(alpha = 0.5) +
+  geom_smooth(se = F, color = "red") +
+  scale_x_date(date_labels = "%Y", date_breaks = "1 year") +
+  theme_minimal() +
+  labs(x = "", y = "Number of Views", title = "Views of Videos in 'Holohoax' and 'Holocaust Revisionism' Playlists on YouTube by Upload Month (2006 - 2018)", caption = "Total Number of Videos: 9,923.\nNote: 5,101 Videos within the playlists are not available or deleted.") +
+  guides(colour = guide_colourbar(barwidth = 15)) +
+  theme(legend.position = "bottom")
+
+tidytemplate::ggsave_it(revisionism_monthly_views, width = 10, height = 6)
+
+revisionism_yearly_views <- revisionism_data %>% 
+  mutate(cdate = lubridate::ydm(paste0(year, "-01-01"))) %>% 
+  arrange(desc(cdate)) %>% 
+  group_by(cdate) %>%
+  summarize(n = n(),
+            Views = sum(viewCount %>% as.numeric, na.rm = T)) %>% 
+  arrange(desc(n)) %>% 
+  na.omit() %>% 
+  mutate(n = ifelse(n == max(n), paste0("Video Count: ", max(n)), n)) %>% 
+  ggplot(aes(cdate, Views)) +
+  geom_point(alpha = 0.5) +
+  scale_y_continuous(labels = scales::unit_format(unit = "m", scale = 0.000001)) +
+  geom_line(alpha = 0.5) +
+  ggrepel::geom_text_repel(aes(label = n), direction = "y") +
+  scale_x_date(date_labels = "%Y", date_breaks = "1 year") +
+  theme_minimal() +
+  labs(x = "", y = "Number of Views", title = "Views of Videos in 'Holohoax' and 'Holocaust Revisionism' Playlists on YouTube by Upload Year (2006 - 2018)", caption = "Total Number of Videos: 9,923.\nNote: 5,101 Videos within the playlists are not available or deleted.") 
+
+tidytemplate::ggsave_it(revisionism_yearly_views, width = 10, height = 6)
+```
+
+
+## Qanon
+
+### Stats
+
+```{r}
+qanon <- get_links("data/qanon - YouTube.html")
+
+## clean playlist
+
+qanon_keywords <- "storm|calm|awakening|insider|military|truth|hidden|conspiracy|q|qanon|praying|medic|secret|deep state"
+
+qanon_playlist <- qanon %>% 
+  mutate(qanon_filter = ifelse(
+      str_detect(stringr::str_to_lower(title), qanon_keywords), 1, 0)) %>% 
+  filter(qanon_filter == 1) %>% 
+  filter(!(str_detect(title, "PROBABLE FALSE FLAGS, FRAUDS, PSYOPS|Pro holocaust"))) %>% 
+  mutate(links = str_remove(links, "https://www.youtube.com/playlist\\?list="))
+
+
+
+qanon_children <- get_items(qanon_playlist$links) 
+
+tidytemplate::save_it(qanon_children)
+
+qanon_plot <- qanon_children %>% 
+  dplyr::distinct(video_id, .keep_all = T)
+
+qanon_plot
+
+
+
+qanon_details <- get_more_details(qanon_plot$video_id)
+
+
+tidytemplate::save_it(qanon_details)
+
+# get_stats(video_id = "m2DYtbNMeSg") %>% 
+#   bind_rows()
+# 
+# 
+# get_vids_details(video_id = "NRxCuujxJSY")
+
+qanon_data <- qanon_plot %>% 
+  left_join(qanon_details)  %>% 
+  mutate(title_filter = ifelse(str_detect(stringr::str_to_lower(title), qanon_keywords ), 1, 0)) %>% 
+  mutate(description_filter = ifelse(str_detect(stringr::str_to_lower(description), qanon_keywords ), 1, 0)) %>% 
+  filter(title_filter == 1 | description_filter == 1) 
+
+
+qanon_dat <- qanon_data %>% 
+  drop_na(title) %>% 
+  mutate(upload_date = contentDetails.videoPublishedAt) %>% 
+  arrange(upload_date) %>% 
+  select(title, upload_date, video_id, viewCount:commentCount, description, channel_title, channel_id)
+
+xlsx::write.xlsx(qanon_dat, file = "data/qanon_dat.xlsx")
+
+table(is.na(qanon_plot$contentDetails.videoId))
+```
+
+### Dataviz
+
+#### over time
+
+```{r}
+options(scipen = 999)
+
+qanon_monthly <- qanon_data %>% 
+  mutate(cdate = lubridate::ydm(paste0(year, "-", "01", "-", month))) %>%# drop_na(cdate)
+  arrange(desc(cdate)) %>% 
+  filter(cdate > as.Date("2017-10-01")) %>% 
+  group_by(cdate) %>%
+  summarize(n = n(),
+            Views = sum(viewCount %>% as.numeric, na.rm = T)) %>% 
+  arrange(desc(n)) %>% 
+  na.omit() %>% 
+  ggplot(aes(cdate, n)) +
+  geom_point(alpha = 0.5) +
+  # viridis::scale_color_viridis("Total Views", direction = -1,
+  #                              labels = scales::unit_format(unit = "m",
+  #                                                           scale = 0.000001),
+  #                              breaks = seq(1000000, 30000000, 9000000)) +
+  # scale_size_continuous("", labels = scales::unit_format(unit = "m",
+  #                                                        scale = 0.000001),
+  #                              breaks = seq(1000000, 30000000, 9000000)) +
+  geom_line(alpha = 0.5) +
+  geom_smooth(se = F, color = "red") +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "2 months") +
+  theme_minimal() +
+  labs(x = "", y = "Number of Videos", title = "Number of Video Uploads in 'Qanon' Playlists on YouTube by Month (2006 - 2018)", caption = "Total Number of Videos: 3,591.\nNote: 1,445 Videos within the playlists are not available or deleted.") #+
+  # guides(colour = guide_colourbar(barwidth = 15)) +
+  # theme(legend.position = "bottom")
+
+tidytemplate::ggsave_it(qanon_monthly, width = 10, height = 6)
+
+qanon_yearly <- qanon_data %>% 
+  mutate(cdate = lubridate::ydm(paste0(year, "-01-01"))) %>% 
+  arrange(desc(cdate)) %>% 
+  filter(cdate > as.Date("2017-01-10")) %>% 
+  group_by(cdate) %>%
+  summarize(n = n(),
+            Views = sum(viewCount %>% as.numeric, na.rm = T)) %>% 
+  arrange(desc(n)) %>% 
+  na.omit() %>% 
+  ggplot(aes(cdate, n)) +
+  geom_point(alpha = 0.5) +
+  # viridis::scale_color_viridis("Total Views", direction = -1,
+  #                              labels = scales::unit_format(unit = "m",
+  #                                                           scale = 0.000001),
+  #                              breaks = seq(5000000, 200000000, 50000000)) +
+  # scale_size_continuous("", labels = scales::unit_format(unit = "m",
+  #                                                        scale = 0.000001),
+  #                              breaks = seq(5000000, 200000000, 50000000)) +
+  geom_line(alpha = 0.5) +
+  ggrepel::geom_text_repel(aes(label = n), direction = "y") +
+  scale_x_date(date_labels = "%Y", date_breaks = "1 year") +
+  theme_minimal() +
+  labs(x = "", y = "Number of Videos", title = "Number of Video Uploads in 'Qanon' Playlists on YouTube by Year (2006 - 2018)", caption = "Total Number of Videos: 3,591.\nNote: 1,445 Videos within the playlists are not available or deleted.") #+
+  # guides(colour = guide_colourbar(barwidth = 6)) +
+  # theme(legend.position = "bottom")
+
+tidytemplate::ggsave_it(qanon_yearly, width = 10, height = 6)
+
+```
+
+
+
+#### views, comments and thumbs up
+
+```{r}
+qanon_monthly_views <- qanon_data %>% 
+  mutate(cdate = lubridate::ydm(paste0(year, "-", "01", "-", month))) %>% #drop_na(cdate)
+  arrange(desc(cdate)) %>% 
+  group_by(cdate) %>%
+  summarize(n = n(),
+            Views = sum(viewCount %>% as.numeric, na.rm = T)) %>% 
+  arrange(desc(n)) %>% 
+  na.omit() %>% 
+  ggplot(aes(cdate, Views)) +
+  geom_point(alpha = 0.5) +
+  scale_y_continuous(labels = scales::unit_format(unit = "m", scale = 0.000001)) +
+  geom_line(alpha = 0.5) +
+  geom_smooth(se = F, color = "red") +
+  scale_x_date(date_labels = "%Y", date_breaks = "1 year") +
+  theme_minimal() +
+  labs(x = "", y = "Number of Views", title = "Views of Videos in 'qanon' Playlists on YouTube by Upload Month (2006 - 2018)", caption = "Total Number of Videos: 3,591.\nNote: 1,445 Videos within the playlists are not available or deleted.") +
+  guides(colour = guide_colourbar(barwidth = 15)) +
+  theme(legend.position = "bottom")
+
+tidytemplate::ggsave_it(qanon_monthly_views, width = 10, height = 6)
+
+qanon_yearly_views <- qanon_data %>% 
+  mutate(cdate = lubridate::ydm(paste0(year, "-01-01"))) %>% 
+  arrange(desc(cdate)) %>% 
+  group_by(cdate) %>%
+  summarize(n = n(),
+            Views = sum(viewCount %>% as.numeric, na.rm = T)) %>% 
+  arrange(desc(n)) %>% 
+  na.omit() %>% 
+  mutate(n = ifelse(n == max(n), paste0("Video Count: ", max(n)), n)) %>% 
+  ggplot(aes(cdate, Views)) +
+  geom_point(alpha = 0.5) +
+  scale_y_continuous(labels = scales::unit_format(unit = "m", scale = 0.000001)) +
+  geom_line(alpha = 0.5) +
+  ggrepel::geom_text_repel(aes(label = n), direction = "y") +
+  scale_x_date(date_labels = "%Y", date_breaks = "1 year") +
+  theme_minimal() +
+  labs(x = "", y = "Number of Views", title = "Views of Videos in 'qanon' Playlists on  YouTube by Upload Year (2006 - 2018)", caption = "Total Number of Videos: 3,591.\nNote: 1,445 Videos within the playlists are not available or deleted.") 
+
+tidytemplate::ggsave_it(qanon_yearly_views, width = 10, height = 6)
+```
+
+
+## Pizzagate
+
+### Stats
+
+```{r}
+pizzagate <- get_links("data/pizzagate - YouTube.html")
+
+## clean playlist
+
+pizza_keywords <- "hoax|fake|debunk|deprogram|lie|fraud|false|truth|conspiracy|pedophile|elite|parlor|pizzagate|pizza|podesta|child porn|child sex|comet|ping pong|traffick|wikileak|pedo|clinton"
+
+pizzagate_playlist <- pizzagate %>% 
+  mutate(pizzagate_filter = ifelse(
+      str_detect(stringr::str_to_lower(title), pizza_keywords), 1, 0)) %>% 
+  filter(pizzagate_filter == 1) %>% 
+  filter(!(str_detect(title, "PROBABLE FALSE FLAGS, FRAUDS, PSYOPS|Pro holocaust|9/11"))) %>% 
+  mutate(links = str_remove(links, "https://www.youtube.com/playlist\\?list="))
+
+
+
+pizzagate_children <- get_items(pizzagate_playlist$links) 
+
+tidytemplate::save_it(pizzagate_children)
+
+
+pizzagate_children <- tidytemplate::load_it("data/pizzagate_children.Rdata")
+
+pizzagate_plot <- pizzagate_children %>% 
+  dplyr::distinct(video_id, .keep_all = T)
+
+pizzagate_plot 
+
+# holohoax_plot %>% 
+#   bind_rows(pizzagate_plot %>% 
+#               mutate(contentDetails.videoPublishedAt = as.character(contentDetails.videoPublishedAt))) %>% 
+#   distinct(video_id, .keep_all = T) %>% drop_na(contentDetails.videoPublishedAt)
+# 
+
+
+pizzagate_details <- get_more_details(pizzagate_plot$video_id)
+
+
+tidytemplate::save_it(pizzagate_details)
+
+pizzagate_details <- tidytemplate::load_it("data/pizzagate_details.Rdata")
+
+
+pizzagate_data <- pizzagate_plot %>% 
+  left_join(pizzagate_details %>% select(-year, -day, -month))  %>% 
+  mutate(title_filter = ifelse(str_detect(stringr::str_to_lower(title), pizza_keywords ), 1, 0)) %>% 
+  mutate(description_filter = ifelse(str_detect(stringr::str_to_lower(description), pizza_keywords ), 1, 0)) %>% 
+  filter(title_filter == 1 | description_filter == 1) 
+
+
+tidytemplate::save_it(pizzagate_data)
+
+pizzagate_dat <- pizzagate_data %>% 
+  drop_na(title) %>% 
+  mutate(upload_date = contentDetails.videoPublishedAt) %>% 
+  arrange(upload_date) %>% 
+  select(title, upload_date, video_id, viewCount:commentCount, description, channel_title, channel_id)
+
+xlsx::write.xlsx(pizzagate_dat, file = "data/pizzagate_dat.xlsx")
+
+table(is.na(pizzagate_plot$contentDetails.videoId))
+
+
+
+```
+
+### Dataviz
+
+#### over time
+
+```{r}
+options(scipen = 999)
+
+pizzagate_monthly <- pizzagate_data %>% 
+  mutate(cdate = lubridate::ydm(paste0(year, "-", "01", "-", month))) %>% #drop_na(cdate)
+  arrange(desc(cdate)) %>% 
+  group_by(cdate) %>%
+  summarize(n = n(),
+            Views = sum(viewCount %>% as.numeric, na.rm = T)) %>% 
+  arrange(desc(n)) %>% 
+  na.omit() %>% 
+  ggplot(aes(cdate, n)) +
+  geom_point(alpha = 0.5) +
+  # viridis::scale_color_viridis("Total Views", direction = -1,
+  #                              labels = scales::unit_format(unit = "m",
+  #                                                           scale = 0.000001),
+  #                              breaks = seq(1000000, 30000000, 9000000)) +
+  # scale_size_continuous("", labels = scales::unit_format(unit = "m",
+  #                                                        scale = 0.000001),
+  #                              breaks = seq(1000000, 30000000, 9000000)) +
+  geom_line(alpha = 0.5) +
+  geom_smooth(se = F, color = "red") +
+  scale_x_date(date_labels = "%Y", date_breaks = "1 year") +
+  theme_minimal() +
+  labs(x = "", y = "Number of Videos", title = "Number of Video Uploads in 'Holohoax' and 'Holocaust pizzagate' Playlists on YouTube by Month (2006 - 2018)", caption = "Total Number of Videos: 9,923.\nNote: 5,101 Videos within the playlists are not available or deleted.") #+
+  # guides(colour = guide_colourbar(barwidth = 15)) +
+  # theme(legend.position = "bottom")
+
+tidytemplate::ggsave_it(pizzagate_monthly, width = 10, height = 6)
+
+pizzagate_yearly <- pizzagate_data %>% 
+  mutate(cdate = lubridate::ydm(paste0(year, "-01-01"))) %>% 
+  arrange(desc(cdate)) %>% 
+  group_by(cdate) %>%
+  summarize(n = n(),
+            Views = sum(viewCount %>% as.numeric, na.rm = T)) %>% 
+  arrange(desc(n)) %>% 
+  na.omit() %>% 
+  ggplot(aes(cdate, n)) +
+  geom_point(alpha = 0.5) +
+  # viridis::scale_color_viridis("Total Views", direction = -1,
+  #                              labels = scales::unit_format(unit = "m",
+  #                                                           scale = 0.000001),
+  #                              breaks = seq(5000000, 200000000, 50000000)) +
+  # scale_size_continuous("", labels = scales::unit_format(unit = "m",
+  #                                                        scale = 0.000001),
+  #                              breaks = seq(5000000, 200000000, 50000000)) +
+  geom_line(alpha = 0.5) +
+  ggrepel::geom_text_repel(aes(label = n), direction = "y") +
+  scale_x_date(date_labels = "%Y", date_breaks = "1 year") +
+  theme_minimal() +
+  labs(x = "", y = "Number of Videos", title = "Number of Video Uploads in 'Holohoax' and 'Holocaust pizzagate' Playlists on YouTube by Year (2006 - 2018)", caption = "Total Number of Videos: 9,923.\nNote: 5,101 Videos within the playlists are not available or deleted.") #+
+  # guides(colour = guide_colourbar(barwidth = 6)) +
+  # theme(legend.position = "bottom")
+
+tidytemplate::ggsave_it(pizzagate_yearly, width = 10, height = 6)
+
+```
+
+
+
+#### views, comments and thumbs up
+
+```{r}
+pizzagate_monthly_views <- pizzagate_data %>% 
+  mutate(cdate = lubridate::ydm(paste0(year, "-", "01", "-", month))) %>% #drop_na(cdate)
+  arrange(desc(cdate)) %>% 
+  group_by(cdate) %>%
+  summarize(n = n(),
+            Views = sum(viewCount %>% as.numeric, na.rm = T)) %>% 
+  arrange(desc(n)) %>% 
+  na.omit() %>% 
+  ggplot(aes(cdate, Views)) +
+  geom_point(alpha = 0.5) +
+  scale_y_continuous(labels = scales::unit_format(unit = "m", scale = 0.000001)) +
+  geom_line(alpha = 0.5) +
+  geom_smooth(se = F, color = "red") +
+  scale_x_date(date_labels = "%Y", date_breaks = "1 year") +
+  theme_minimal() +
+  labs(x = "", y = "Number of Views", title = "Views of Videos in 'Holohoax' and 'Holocaust pizzagate' Playlists on YouTube by Upload Month (2006 - 2018)", caption = "Total Number of Videos: 9,923.\nNote: 5,101 Videos within the playlists are not available or deleted.") +
+  guides(colour = guide_colourbar(barwidth = 15)) +
+  theme(legend.position = "bottom")
+
+tidytemplate::ggsave_it(pizzagate_monthly_views, width = 10, height = 6)
+
+pizzagate_yearly_views <- pizzagate_data %>% 
+  mutate(cdate = lubridate::ydm(paste0(year, "-01-01"))) %>% 
+  arrange(desc(cdate)) %>% 
+  group_by(cdate) %>%
+  summarize(n = n(),
+            Views = sum(viewCount %>% as.numeric, na.rm = T)) %>% 
+  arrange(desc(n)) %>% 
+  na.omit() %>% 
+  mutate(n = ifelse(n == max(n), paste0("Video Count: ", max(n)), n)) %>% 
+  ggplot(aes(cdate, Views)) +
+  geom_point(alpha = 0.5) +
+  scale_y_continuous(labels = scales::unit_format(unit = "m", scale = 0.000001)) +
+  geom_line(alpha = 0.5) +
+  ggrepel::geom_text_repel(aes(label = n), direction = "y") +
+  scale_x_date(date_labels = "%Y", date_breaks = "1 year") +
+  theme_minimal() +
+  labs(x = "", y = "Number of Views", title = "Views of Videos in 'Holohoax' and 'Holocaust pizzagate' Playlists on YouTube by Upload Year (2006 - 2018)", caption = "Total Number of Videos: 9,923.\nNote: 5,101 Videos within the playlists are not available or deleted.") 
+
+tidytemplate::ggsave_it(pizzagate_yearly_views, width = 10, height = 6)
+```
+
+## 9/11
+
+### Stats
+
+```{r}
+nine_11 <- get_links("data/truth 9_11 - YouTube.html")
+
+## clean playlist
+
+nine_11_keywords <- "hoax|fake|debunk|lie|fraud|fal|truth|fabricate|hidden|conspiracy|9.11|nine eleven|wtc|demolition|control|explosiv|jetful|melt|steel.beam|steelbeam|trade center|engineer|proof|loose|inside job"
+
+
+hoax_keywords <- "(steel.beam|steelbeam|inside job|loose change|explosi|demolition|jetfuel|jet.fuel|free fall|false flag)|(9.11|nine eleven|wtc).*?(hoax|fake|debunk|deprogram|lie|fraud|conspiracy|secret|question|scam)"
+
+
+
+nine_11_playlist <- nine_11 %>% 
+  # mutate(nine_11_filter = ifelse(
+  #     str_detect(stringr::str_to_lower(title), nine_11_keywords), 1, 0)) %>% 
+  # filter(nine_11_filter == 1) %>% 
+  # filter(!(str_detect(title, "PROBABLE FALSE FLAGS, FRAUDS, PSYOPS|Pro holocaust"))) %>% 
+  mutate(links = str_remove(links, "https://www.youtube.com/playlist\\?list="))
+
+
+
+nine_11_children <- get_items(nine_11_playlist$links) 
+
+tidytemplate::save_it(nine_11_children)
+
+nine_11_plot <- nine_11_children %>% 
+  dplyr::distinct(video_id, .keep_all = T)
+
+nine_11_plot
+
+
+
+nine_11_details <- get_more_details(nine_11_plot$video_id)
+
+
+tidytemplate::save_it(nine_11_details)
+
+# get_stats(video_id = "m2DYtbNMeSg") %>% 
+#   bind_rows()
+# 
+# 
+# get_vids_details(video_id = "NRxCuujxJSY")
+
+
+nine_11_data <- nine_11_plot %>% 
+  left_join(nine_11_details)  %>% 
+  mutate(title_filter = ifelse(str_detect(stringr::str_to_lower(title), nine_11_keywords ), 1, 0)) %>% 
+  mutate(description_filter = ifelse(str_detect(stringr::str_to_lower(description), nine_11_keywords ), 1, 0)) %>% 
+  filter(title_filter == 1 | description_filter == 1) 
+
+tidytemplate::save_it(nine_11_data)
+
+
+nine_11_dat <- nine_11_data %>% 
+  drop_na(title) %>% 
+  mutate(upload_date = contentDetails.videoPublishedAt) %>% 
+  arrange(upload_date) %>% 
+  select(title, upload_date, video_id, viewCount:commentCount, description, channel_title, channel_id)
+
+xlsx::write.xlsx(nine_11_dat, file = "data/nine_11_dat.xlsx")
+
+table(is.na(nine_11_plot$contentDetails.videoId))
+```
+
+### Dataviz
+
+#### over time
+
+```{r}
+options(scipen = 999)
+
+nine_11_monthly <- nine_11_data %>% 
+  mutate(cdate = lubridate::ydm(paste0(year, "-", "01", "-", month))) %>%# drop_na(cdate)
+  arrange(desc(cdate)) %>% 
+  group_by(cdate) %>%
+  summarize(n = n(),
+            Views = sum(viewCount %>% as.numeric, na.rm = T)) %>% 
+  arrange(desc(n)) %>% 
+  na.omit() %>% 
+  ggplot(aes(cdate, n)) +
+  geom_point(alpha = 0.5) +
+  # viridis::scale_color_viridis("Total Views", direction = -1,
+  #                              labels = scales::unit_format(unit = "m",
+  #                                                           scale = 0.000001),
+  #                              breaks = seq(1000000, 30000000, 9000000)) +
+  # scale_size_continuous("", labels = scales::unit_format(unit = "m",
+  #                                                        scale = 0.000001),
+  #                              breaks = seq(1000000, 30000000, 9000000)) +
+  geom_line(alpha = 0.5) +
+  geom_smooth(se = F, color = "red") +
+  scale_x_date(date_labels = "%Y", date_breaks = "1 year") +
+  theme_minimal() +
+  labs(x = "", y = "Number of Videos", title = "Number of Video Uploads in 'nine_11' Playlists on YouTube by Month (2006 - 2018)", caption = "Total Number of Videos: 3,591.\nNote: 1,445 Videos within the playlists are not available or deleted.") #+
+  # guides(colour = guide_colourbar(barwidth = 15)) +
+  # theme(legend.position = "bottom")
+
+tidytemplate::ggsave_it(nine_11_monthly, width = 10, height = 6)
+
+nine_11_yearly <- nine_11_data %>% 
+  mutate(cdate = lubridate::ydm(paste0(year, "-01-01"))) %>% 
+  arrange(desc(cdate)) %>% 
+  group_by(cdate) %>%
+  summarize(n = n(),
+            Views = sum(viewCount %>% as.numeric, na.rm = T)) %>% 
+  arrange(desc(n)) %>% 
+  na.omit() %>% 
+  ggplot(aes(cdate, n)) +
+  geom_point(alpha = 0.5) +
+  # viridis::scale_color_viridis("Total Views", direction = -1,
+  #                              labels = scales::unit_format(unit = "m",
+  #                                                           scale = 0.000001),
+  #                              breaks = seq(5000000, 200000000, 50000000)) +
+  # scale_size_continuous("", labels = scales::unit_format(unit = "m",
+  #                                                        scale = 0.000001),
+  #                              breaks = seq(5000000, 200000000, 50000000)) +
+  geom_line(alpha = 0.5) +
+  ggrepel::geom_text_repel(aes(label = n), direction = "y") +
+  scale_x_date(date_labels = "%Y", date_breaks = "1 year") +
+  theme_minimal() +
+  labs(x = "", y = "Number of Videos", title = "Number of Video Uploads in 'nine_11' Playlists on YouTube by Year (2006 - 2018)", caption = "Total Number of Videos: 3,591.\nNote: 1,445 Videos within the playlists are not available or deleted.") #+
+  # guides(colour = guide_colourbar(barwidth = 6)) +
+  # theme(legend.position = "bottom")
+
+tidytemplate::ggsave_it(nine_11_yearly, width = 10, height = 6)
+
+```
+
+
+#### views, comments and thumbs up
+
+```{r}
+nine_11_monthly_views <- nine_11_data %>% 
+  mutate(cdate = lubridate::ydm(paste0(year, "-", "01", "-", month))) %>% #drop_na(cdate)
+  arrange(desc(cdate)) %>% 
+  group_by(cdate) %>%
+  summarize(n = n(),
+            Views = sum(viewCount %>% as.numeric, na.rm = T)) %>% 
+  arrange(desc(n)) %>% 
+  na.omit() %>% 
+  ggplot(aes(cdate, Views)) +
+  geom_point(alpha = 0.5) +
+  scale_y_continuous(labels = scales::unit_format(unit = "m", scale = 0.000001)) +
+  geom_line(alpha = 0.5) +
+  geom_smooth(se = F, color = "red") +
+  scale_x_date(date_labels = "%Y", date_breaks = "1 year") +
+  theme_minimal() +
+  labs(x = "", y = "Number of Views", title = "Views of Videos in 'nine_11' Playlists on YouTube by Upload Month (2006 - 2018)", caption = "Total Number of Videos: 3,591.\nNote: 1,445 Videos within the playlists are not available or deleted.") +
+  guides(colour = guide_colourbar(barwidth = 15)) +
+  theme(legend.position = "bottom")
+
+tidytemplate::ggsave_it(nine_11_monthly_views, width = 10, height = 6)
+
+nine_11_yearly_views <- nine_11_data %>% 
+  mutate(cdate = lubridate::ydm(paste0(year, "-01-01"))) %>% 
+  arrange(desc(cdate)) %>% 
+  group_by(cdate) %>%
+  summarize(n = n(),
+            Views = sum(viewCount %>% as.numeric, na.rm = T)) %>% 
+  arrange(desc(n)) %>% 
+  na.omit() %>% 
+  mutate(n = ifelse(n == max(n), paste0("Video Count: ", max(n)), n)) %>% 
+  ggplot(aes(cdate, Views)) +
+  geom_point(alpha = 0.5) +
+  scale_y_continuous(labels = scales::unit_format(unit = "m", scale = 0.000001)) +
+  geom_line(alpha = 0.5) +
+  ggrepel::geom_text_repel(aes(label = n), direction = "y") +
+  scale_x_date(date_labels = "%Y", date_breaks = "1 year") +
+  theme_minimal() +
+  labs(x = "", y = "Number of Views", title = "Views of Videos in 'nine_11' Playlists on  YouTube by Upload Year (2006 - 2018)", caption = "Total Number of Videos: 3,591.\nNote: 1,445 Videos within the playlists are not available or deleted.") 
+
+tidytemplate::ggsave_it(nine_11_yearly_views, width = 10, height = 6)
+```
+
+
+
+## Sandy Hook
+
+### Stats
+
+```{r}
+sandy_hook <- get_links("data/sandy hook hoax - YouTube.html")
+
+## clean playlist
+
+sandy_hook_keywords <- "hoax|fake|debunk|deprogram|lie|denier|denial|deny|fraud|false|truth|fabricate|hidden|conspiracy|crisis actor|sandy hook|gun"
+
+sandy_hook_playlist <- sandy_hook %>% 
+  mutate(sandy_hook_filter = ifelse(
+      str_detect(stringr::str_to_lower(title), sandy_hook_keywords), 1, 0)) %>% 
+  filter(sandy_hook_filter == 1) %>% 
+  filter(!(str_detect(title, "PROBABLE FALSE FLAGS, FRAUDS, PSYOPS|Pro holocaust"))) %>% 
+  mutate(links = str_remove(links, "https://www.youtube.com/playlist\\?list="))
+
+
+
+sandy_hook_children <- get_items(sandy_hook_playlist$links) 
+
+tidytemplate::save_it(sandy_hook_children)
+
+sandy_hook_plot <- sandy_hook_children %>% 
+  dplyr::distinct(video_id, .keep_all = T)
+
+sandy_hook_plot
+
+
+
+sandy_hook_details <- get_more_details(sandy_hook_plot$video_id)
+
+
+tidytemplate::save_it(sandy_hook_details)
+
+# get_stats(video_id = "m2DYtbNMeSg") %>% 
+#   bind_rows()
+# 
+# 
+# get_vids_details(video_id = "NRxCuujxJSY")
+
+
+sandy_hook_data <- sandy_hook_plot %>% 
+  left_join(sandy_hook_details)  %>% 
+  mutate(title_filter = ifelse(str_detect(stringr::str_to_lower(title), sandy_hook_keywords ), 1, 0)) %>% 
+  mutate(description_filter = ifelse(str_detect(stringr::str_to_lower(description), sandy_hook_keywords ), 1, 0)) %>% 
+  filter(title_filter == 1 | description_filter == 1) 
+
+
+sandy_hook_dat <- sandy_hook_data %>% 
+  drop_na(title) %>% 
+  mutate(upload_date = contentDetails.videoPublishedAt) %>% 
+  arrange(upload_date) %>% 
+  select(title, upload_date, video_id, viewCount:commentCount, description, channel_title, channel_id)
+
+xlsx::write.xlsx(sandy_hook_dat, file = "data/sandy_hook_dat.xlsx")
+
+table(is.na(sandy_hook_plot$contentDetails.videoId))
+```
+
+### Dataviz
+
+#### over time
+
+```{r}
+options(scipen = 999)
+
+sandy_hook_monthly <- sandy_hook_data %>% 
+  mutate(cdate = lubridate::ydm(paste0(year, "-", "01", "-", month))) %>%# drop_na(cdate)
+  arrange(desc(cdate)) %>% 
+  group_by(cdate) %>%
+  summarize(n = n(),
+            Views = sum(viewCount %>% as.numeric, na.rm = T)) %>% 
+  arrange(desc(n)) %>% 
+  na.omit() %>% 
+  ggplot(aes(cdate, n)) +
+  geom_point(alpha = 0.5) +
+  # viridis::scale_color_viridis("Total Views", direction = -1,
+  #                              labels = scales::unit_format(unit = "m",
+  #                                                           scale = 0.000001),
+  #                              breaks = seq(1000000, 30000000, 9000000)) +
+  # scale_size_continuous("", labels = scales::unit_format(unit = "m",
+  #                                                        scale = 0.000001),
+  #                              breaks = seq(1000000, 30000000, 9000000)) +
+  geom_line(alpha = 0.5) +
+  geom_smooth(se = F, color = "red") +
+  scale_x_date(date_labels = "%Y", date_breaks = "1 year") +
+  theme_minimal() +
+  labs(x = "", y = "Number of Videos", title = "Number of Video Uploads in 'sandy_hook' Playlists on YouTube by Month (2006 - 2018)", caption = "Total Number of Videos: 3,591.\nNote: 1,445 Videos within the playlists are not available or deleted.") #+
+  # guides(colour = guide_colourbar(barwidth = 15)) +
+  # theme(legend.position = "bottom")
+
+tidytemplate::ggsave_it(sandy_hook_monthly, width = 10, height = 6)
+
+sandy_hook_yearly <- sandy_hook_data %>% 
+  mutate(cdate = lubridate::ydm(paste0(year, "-01-01"))) %>% 
+  arrange(desc(cdate)) %>% 
+  group_by(cdate) %>%
+  summarize(n = n(),
+            Views = sum(viewCount %>% as.numeric, na.rm = T)) %>% 
+  arrange(desc(n)) %>% 
+  na.omit() %>% 
+  ggplot(aes(cdate, n)) +
+  geom_point(alpha = 0.5) +
+  # viridis::scale_color_viridis("Total Views", direction = -1,
+  #                              labels = scales::unit_format(unit = "m",
+  #                                                           scale = 0.000001),
+  #                              breaks = seq(5000000, 200000000, 50000000)) +
+  # scale_size_continuous("", labels = scales::unit_format(unit = "m",
+  #                                                        scale = 0.000001),
+  #                              breaks = seq(5000000, 200000000, 50000000)) +
+  geom_line(alpha = 0.5) +
+  ggrepel::geom_text_repel(aes(label = n), direction = "y") +
+  scale_x_date(date_labels = "%Y", date_breaks = "1 year") +
+  theme_minimal() +
+  labs(x = "", y = "Number of Videos", title = "Number of Video Uploads in 'sandy_hook' Playlists on YouTube by Year (2006 - 2018)", caption = "Total Number of Videos: 3,591.\nNote: 1,445 Videos within the playlists are not available or deleted.") #+
+  # guides(colour = guide_colourbar(barwidth = 6)) +
+  # theme(legend.position = "bottom")
+
+tidytemplate::ggsave_it(sandy_hook_yearly, width = 10, height = 6)
+
+```
+
+
+#### views, comments and thumbs up
+
+```{r}
+sandy_hook_monthly_views <- sandy_hook_data %>% 
+  mutate(cdate = lubridate::ydm(paste0(year, "-", "01", "-", month))) %>% #drop_na(cdate)
+  arrange(desc(cdate)) %>% 
+  group_by(cdate) %>%
+  summarize(n = n(),
+            Views = sum(viewCount %>% as.numeric, na.rm = T)) %>% 
+  arrange(desc(n)) %>% 
+  na.omit() %>% 
+  ggplot(aes(cdate, Views)) +
+  geom_point(alpha = 0.5) +
+  scale_y_continuous(labels = scales::unit_format(unit = "m", scale = 0.000001)) +
+  geom_line(alpha = 0.5) +
+  geom_smooth(se = F, color = "red") +
+  scale_x_date(date_labels = "%Y", date_breaks = "1 year") +
+  theme_minimal() +
+  labs(x = "", y = "Number of Views", title = "Views of Videos in 'sandy_hook' Playlists on YouTube by Upload Month (2006 - 2018)", caption = "Total Number of Videos: 3,591.\nNote: 1,445 Videos within the playlists are not available or deleted.") +
+  guides(colour = guide_colourbar(barwidth = 15)) +
+  theme(legend.position = "bottom")
+
+tidytemplate::ggsave_it(sandy_hook_monthly_views, width = 10, height = 6)
+
+sandy_hook_yearly_views <- sandy_hook_data %>% 
+  mutate(cdate = lubridate::ydm(paste0(year, "-01-01"))) %>% 
+  arrange(desc(cdate)) %>% 
+  group_by(cdate) %>%
+  summarize(n = n(),
+            Views = sum(viewCount %>% as.numeric, na.rm = T)) %>% 
+  arrange(desc(n)) %>% 
+  na.omit() %>% 
+  mutate(n = ifelse(n == max(n), paste0("Video Count: ", max(n)), n)) %>% 
+  ggplot(aes(cdate, Views)) +
+  geom_point(alpha = 0.5) +
+  scale_y_continuous(labels = scales::unit_format(unit = "m", scale = 0.000001)) +
+  geom_line(alpha = 0.5) +
+  ggrepel::geom_text_repel(aes(label = n), direction = "y") +
+  scale_x_date(date_labels = "%Y", date_breaks = "1 year") +
+  theme_minimal() +
+  labs(x = "", y = "Number of Views", title = "Views of Videos in 'sandy_hook' Playlists on  YouTube by Upload Year (2006 - 2018)", caption = "Total Number of Videos: 3,591.\nNote: 1,445 Videos within the playlists are not available or deleted.") 
+
+tidytemplate::ggsave_it(sandy_hook_yearly_views, width = 10, height = 6)
+```
+
+
+
+
+
+## BRD Gmbh
+
+### Stats
+
+```{r}
+brd_gmbh <- get_links("data/brd gmbh - YouTube.html")
+
+## clean playlist
+
+brd_gmbh_keywords <- "hoax|fake|conspiracy|verschwörung|firma|besatzer|lüge|kontroll|friedensvertrag|unabhängig|wahrheit|personalausweis|verfassung|gehim|falsch|gg|reich|grundgesetz"
+
+brd_gmbh_playlist <- brd_gmbh %>% 
+  mutate(brd_gmbh_filter = ifelse(
+      str_detect(stringr::str_to_lower(title), brd_gmbh_keywords), 1, 0)) %>% 
+  filter(brd_gmbh_filter == 1) %>% 
+  filter(!(str_detect(title, "PROBABLE FALSE FLAGS, FRAUDS, PSYOPS|Pro holocaust"))) %>% 
+  mutate(links = str_remove(links, "https://www.youtube.com/playlist\\?list="))
+
+
+
+brd_gmbh_children <- get_items(brd_gmbh_playlist$links) 
+
+tidytemplate::save_it(brd_gmbh_children)
+
+brd_gmbh_plot <- brd_gmbh_children %>% 
+  dplyr::distinct(video_id, .keep_all = T)
+
+brd_gmbh_plot
+
+
+
+brd_gmbh_details <- get_more_details(brd_gmbh_plot$video_id)
+
+
+tidytemplate::save_it(brd_gmbh_details)
+
+# get_stats(video_id = "m2DYtbNMeSg") %>% 
+#   bind_rows()
+# 
+# 
+# get_vids_details(video_id = "NRxCuujxJSY")
+
+
+brd_gmbh_data <- brd_gmbh_plot %>% 
+  left_join(brd_gmbh_details)  %>% 
+  mutate(title_filter = ifelse(str_detect(stringr::str_to_lower(title), brd_gmbh_keywords ), 1, 0)) %>% 
+  mutate(description_filter = ifelse(str_detect(stringr::str_to_lower(description), brd_gmbh_keywords ), 1, 0)) %>% 
+  filter(title_filter == 1 | description_filter == 1) 
+
+
+brd_gmbh_dat <- brd_gmbh_data %>% 
+  drop_na(title) %>% 
+  mutate(upload_date = contentDetails.videoPublishedAt) %>% 
+  arrange(upload_date) %>% 
+  select(title, upload_date, video_id, viewCount:commentCount, description, channel_title, channel_id)
+
+xlsx::write.xlsx(brd_gmbh_dat, file = "data/brd_gmbh_dat.xlsx")
+
+table(is.na(brd_gmbh_plot$contentDetails.videoId))
+```
+
+### Dataviz
+
+#### over time
+
+```{r}
+options(scipen = 999)
+
+brd_gmbh_monthly <- brd_gmbh_data %>% 
+  mutate(cdate = lubridate::ydm(paste0(year, "-", "01", "-", month))) %>%# drop_na(cdate)
+  arrange(desc(cdate)) %>% 
+  group_by(cdate) %>%
+  summarize(n = n(),
+            Views = sum(viewCount %>% as.numeric, na.rm = T)) %>% 
+  arrange(desc(n)) %>% 
+  na.omit() %>% 
+  ggplot(aes(cdate, n)) +
+  geom_point(alpha = 0.5) +
+  # viridis::scale_color_viridis("Total Views", direction = -1,
+  #                              labels = scales::unit_format(unit = "m",
+  #                                                           scale = 0.000001),
+  #                              breaks = seq(1000000, 30000000, 9000000)) +
+  # scale_size_continuous("", labels = scales::unit_format(unit = "m",
+  #                                                        scale = 0.000001),
+  #                              breaks = seq(1000000, 30000000, 9000000)) +
+  geom_line(alpha = 0.5) +
+  geom_smooth(se = F, color = "red") +
+  scale_x_date(date_labels = "%Y", date_breaks = "1 year") +
+  theme_minimal() +
+  labs(x = "", y = "Number of Videos", title = "Number of Video Uploads in 'brd_gmbh' Playlists on YouTube by Month (2006 - 2018)", caption = "Total Number of Videos: 3,591.\nNote: 1,445 Videos within the playlists are not available or deleted.") #+
+  # guides(colour = guide_colourbar(barwidth = 15)) +
+  # theme(legend.position = "bottom")
+
+tidytemplate::ggsave_it(brd_gmbh_monthly, width = 10, height = 6)
+
+brd_gmbh_yearly <- brd_gmbh_data %>% 
+  mutate(cdate = lubridate::ydm(paste0(year, "-01-01"))) %>% 
+  arrange(desc(cdate)) %>% 
+  group_by(cdate) %>%
+  summarize(n = n(),
+            Views = sum(viewCount %>% as.numeric, na.rm = T)) %>% 
+  arrange(desc(n)) %>% 
+  na.omit() %>% 
+  ggplot(aes(cdate, n)) +
+  geom_point(alpha = 0.5) +
+  # viridis::scale_color_viridis("Total Views", direction = -1,
+  #                              labels = scales::unit_format(unit = "m",
+  #                                                           scale = 0.000001),
+  #                              breaks = seq(5000000, 200000000, 50000000)) +
+  # scale_size_continuous("", labels = scales::unit_format(unit = "m",
+  #                                                        scale = 0.000001),
+  #                              breaks = seq(5000000, 200000000, 50000000)) +
+  geom_line(alpha = 0.5) +
+  ggrepel::geom_text_repel(aes(label = n), direction = "y") +
+  scale_x_date(date_labels = "%Y", date_breaks = "1 year") +
+  theme_minimal() +
+  labs(x = "", y = "Number of Videos", title = "Number of Video Uploads in 'brd_gmbh' Playlists on YouTube by Year (2006 - 2018)", caption = "Total Number of Videos: 3,591.\nNote: 1,445 Videos within the playlists are not available or deleted.") #+
+  # guides(colour = guide_colourbar(barwidth = 6)) +
+  # theme(legend.position = "bottom")
+
+tidytemplate::ggsave_it(brd_gmbh_yearly, width = 10, height = 6)
+
+```
+
+
+#### views, comments and thumbs up
+
+```{r}
+brd_gmbh_monthly_views <- brd_gmbh_data %>% 
+  mutate(cdate = lubridate::ydm(paste0(year, "-", "01", "-", month))) %>% #drop_na(cdate)
+  arrange(desc(cdate)) %>% 
+  group_by(cdate) %>%
+  summarize(n = n(),
+            Views = sum(viewCount %>% as.numeric, na.rm = T)) %>% 
+  arrange(desc(n)) %>% 
+  na.omit() %>% 
+  ggplot(aes(cdate, Views)) +
+  geom_point(alpha = 0.5) +
+  scale_y_continuous(labels = scales::unit_format(unit = "m", scale = 0.000001)) +
+  geom_line(alpha = 0.5) +
+  geom_smooth(se = F, color = "red") +
+  scale_x_date(date_labels = "%Y", date_breaks = "1 year") +
+  theme_minimal() +
+  labs(x = "", y = "Number of Views", title = "Views of Videos in 'brd_gmbh' Playlists on YouTube by Upload Month (2006 - 2018)", caption = "Total Number of Videos: 3,591.\nNote: 1,445 Videos within the playlists are not available or deleted.") +
+  guides(colour = guide_colourbar(barwidth = 15)) +
+  theme(legend.position = "bottom")
+
+tidytemplate::ggsave_it(brd_gmbh_monthly_views, width = 10, height = 6)
+
+brd_gmbh_yearly_views <- brd_gmbh_data %>% 
+  mutate(cdate = lubridate::ydm(paste0(year, "-01-01"))) %>% 
+  arrange(desc(cdate)) %>% 
+  group_by(cdate) %>%
+  summarize(n = n(),
+            Views = sum(viewCount %>% as.numeric, na.rm = T)) %>% 
+  arrange(desc(n)) %>% 
+  na.omit() %>% 
+  mutate(n = ifelse(n == max(n), paste0("Video Count: ", max(n)), n)) %>% 
+  ggplot(aes(cdate, Views)) +
+  geom_point(alpha = 0.5) +
+  scale_y_continuous(labels = scales::unit_format(unit = "m", scale = 0.000001)) +
+  geom_line(alpha = 0.5) +
+  ggrepel::geom_text_repel(aes(label = n), direction = "y") +
+  scale_x_date(date_labels = "%Y", date_breaks = "1 year") +
+  theme_minimal() +
+  labs(x = "", y = "Number of Views", title = "Views of Videos in 'brd_gmbh' Playlists on  YouTube by Upload Year (2006 - 2018)", caption = "Total Number of Videos: 3,591.\nNote: 1,445 Videos within the playlists are not available or deleted.") 
+
+tidytemplate::ggsave_it(brd_gmbh_yearly_views, width = 10, height = 6)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## Together
+
+
+```{r}
+
+revisionism_data <- tidytemplate::load_it("data/revisionism_data.Rdata")
+
+qanon_data <- tidytemplate::load_it("data/qanon_data.Rdata")
+
+nine_11_data <- tidytemplate::load_it("data/nine_11_data.Rdata")
+
+
+together_monthly <- revisionism_data %>% 
+  mutate(type = "'Holohoax'/Revisionism") %>% 
+  mutate(cdate = lubridate::ydm(paste0(year, "-", "01", "-", month))) %>%# drop_na(cdate)
+  select(-contentDetails.videoPublishedAt) %>% 
+  bind_rows(qanon_data  %>% 
+              mutate(cdate = lubridate::ydm(paste0(year, "-", "01", "-", month))) %>% 
+              mutate(type = "Qanon") %>%
+              filter(cdate > as.Date("2017-01-01"))) %>% 
+  bind_rows(nine_11_data %>% 
+              mutate(cdate = lubridate::ydm(paste0(year, "-", "01", "-", month))) %>% 
+              mutate(type = "9/11 Truther")) %>% 
+  arrange(desc(cdate)) %>% 
+  group_by(cdate, type) %>%
+  summarize(n = n(),
+            Views = sum(viewCount %>% as.numeric, na.rm = T)) %>% 
+  arrange(desc(n)) %>% 
+  na.omit() %>% 
+  ggplot(aes(cdate, n, color = type)) +
+  geom_point(alpha = 0.5) +
+  ggthemes::scale_color_fivethirtyeight("Type") +
+  geom_line(alpha = 0.5) +
+  scale_x_date(date_labels = "%Y", date_breaks = "1 year") +
+  theme_minimal() +
+  labs(x = "", y = "Number of Videos", title = "Number of selected Video Uploads on YouTube by Month (2006 - 2018)", caption = "Total Number of Videos: 3,591.\nNote: 1,445 Videos within the playlists are not available or deleted.") +
+  # guides(colour = guide_colourbar(barwidth = 15)) +
+  theme(legend.position = "bottom")
+
+tidytemplate::ggsave_it(together_monthly, width = 10, height = 6)
+```
+
